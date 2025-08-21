@@ -1,0 +1,107 @@
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TRBOARD - Scanner</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #111; color: white; text-align: center; }
+    video { width: 100%; height: auto; border-radius: 12px; margin-top: 10px; }
+    #result { margin-top: 20px; font-size: 18px; }
+    button { margin: 10px; padding: 10px 20px; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; }
+    #copyBtn { background: #4caf50; color: white; }
+    #torchBtn { background: #ff9800; color: white; }
+  </style>
+</head>
+<body>
+  <h2>📷 Scanner TRBOARD</h2>
+  <video id="video" autoplay></video>
+  <div id="result">Aucun code détecté</div>
+  <button id="copyBtn" style="display:none;">📋 Copier</button>
+  <button id="torchBtn">🔦 Lampe</button>
+
+  <script src="https://unpkg.com/@zxing/library@latest"></script>
+  <script>
+    const codeReader = new ZXing.BrowserMultiFormatReader();
+    const videoElement = document.getElementById('video');
+    const resultDiv = document.getElementById('result');
+    const copyBtn = document.getElementById('copyBtn');
+    const torchBtn = document.getElementById('torchBtn');
+    let currentCode = null;
+    let track;
+
+    async function startScanner() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputDevices = devices.filter(d => d.kind === 'videoinput');
+        const selectedDeviceId = videoInputDevices[0].deviceId;
+
+        codeReader.decodeFromVideoDevice(selectedDeviceId, videoElement, (result, err) => {
+          if (result) {
+            if (result.text !== currentCode) {
+              currentCode = result.text;
+              resultDiv.textContent = "✅ Code : " + result.text + " (" + result.getBarcodeFormat() + ")";
+              copyBtn.style.display = "inline-block";
+              navigator.vibrate(200);
+
+              // Vérifier si redirect ou webhook dans l'URL
+              const params = new URLSearchParams(window.location.search);
+              const redirect = params.get("redirect");
+              const webhook = params.get("webhook");
+
+              if (webhook) {
+                fetch(webhook, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    code: result.text,
+                    format: result.getBarcodeFormat(),
+                    est: params.get("est"),
+                    user: params.get("user"),
+                    scanned_at: new Date().toISOString()
+                  })
+                });
+              }
+
+              if (redirect) {
+                window.location.href = redirect + "?code=" + encodeURIComponent(result.text) +
+                  "&format=" + encodeURIComponent(result.getBarcodeFormat()) +
+                  "&est=" + encodeURIComponent(params.get("est") || "") +
+                  "&user=" + encodeURIComponent(params.get("user") || "");
+              }
+            }
+          }
+        });
+
+        // Gérer la lampe torche si dispo
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: selectedDeviceId } });
+        videoElement.srcObject = stream;
+        track = stream.getVideoTracks()[0];
+      } catch (err) {
+        resultDiv.textContent = "Erreur : " + err;
+      }
+    }
+
+    // Copier dans le presse-papier
+    copyBtn.addEventListener("click", () => {
+      if (currentCode) {
+        navigator.clipboard.writeText(currentCode);
+        alert("Code copié : " + currentCode);
+      }
+    });
+
+    // Activer/désactiver la lampe
+    torchBtn.addEventListener("click", () => {
+      if (track && track.getCapabilities().torch) {
+        const isTorchOn = track.getConstraints().advanced?.[0]?.torch || false;
+        track.applyConstraints({ advanced: [{ torch: !isTorchOn }] });
+      } else {
+        alert("Lampe non supportée sur cet appareil.");
+      }
+    });
+
+    startScanner();
+  </script>
+</body>
+</html>
